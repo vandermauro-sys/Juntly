@@ -188,3 +188,4 @@ th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
   .card { padding: 14px; }
   .hide-mobile { display: none; }
 }
+.cap::first-letter { text-transform: uppercase; }

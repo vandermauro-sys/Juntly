@@ -115,7 +115,7 @@ export default function Agenda({ trip, groups }) {
 
       {Object.entries(byDay).map(([day, list]) => (
         <div className="card" key={day}>
-          <h3 style={{ textTransform: 'capitalize' }}>{fmtDay(day)}</h3>
+          <h3 className="cap">{fmtDay(day)}</h3>
           <div className="table-wrap">
             <table>
               <tbody>

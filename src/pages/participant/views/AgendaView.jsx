@@ -34,7 +34,7 @@ export default function AgendaView({ data, lang, onSurveyDone }) {
               </button>
             ))}
           </div>
-          <h2 style={{ textTransform: 'capitalize' }}>{fmtDay(day, lang)}</h2>
+          <h2 className="cap">{fmtDay(day, lang)}</h2>
           <div className="timeline">
             {(byDay[day] || []).map((i) => (
               <div key={i.id} className={`tl-item ${isNow(i, day) ? 'now' : ''}`}>
