@@ -428,3 +428,28 @@ create policy branding_obj_write on storage.objects for insert with check (
 create policy branding_obj_update on storage.objects for update using (
   bucket_id = 'branding' and is_agency_admin(((storage.foldername(name))[1])::uuid)
 );
+
+-- ---------------------------------------------------------------------
+-- Segurança das funções: só usuários logados (inclusive participantes
+-- anônimos) chamam as funções; a prévia da viagem fica aberta para a
+-- tela de entrada mostrar o nome antes do login.
+-- ---------------------------------------------------------------------
+alter function public.is_anonymous() set search_path = public;
+alter function public.touch_updated_at() set search_path = public;
+
+do $$
+declare f text;
+begin
+  foreach f in array array[
+    'public.is_agency_member(uuid)', 'public.is_agency_admin(uuid)', 'public.is_trip_staff(uuid)',
+    'public.is_trip_participant(uuid)', 'public.my_participant_id(uuid)', 'public.create_agency(text)',
+    'public.add_agency_member(uuid, text, text)', 'public.list_agency_members(uuid)',
+    'public.join_trip(text, text, text, text, text, boolean)', 'public.is_anonymous()'
+  ] loop
+    execute format('revoke execute on function %s from public, anon', f);
+    execute format('grant execute on function %s to authenticated', f);
+  end loop;
+end $$;
+
+revoke execute on function public.trip_preview(text) from public;
+grant execute on function public.trip_preview(text) to anon, authenticated;
