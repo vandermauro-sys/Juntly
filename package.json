@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",
+    "@vladmandic/face-api": "^1.7.15",
     "html5-qrcode": "^2.3.8",
     "papaparse": "^5.7.0",
     "qrcode.react": "^4.2.0",
@@ -17,7 +18,8 @@
     "react-router-dom": "^7.18.5"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.14",
+    "@electric-sql/pglite": "0.5.9",
+    "@electric-sql/pglite-pgvector": "0.0.10",
     "@vitejs/plugin-react": "^6.2.1",
     "vite": "^8.3.5",
     "vite-plugin-pwa": "^2.0.0"

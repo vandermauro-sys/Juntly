@@ -1,8 +1,11 @@
 import { PGlite } from '@electric-sql/pglite'
+import { vector } from '@electric-sql/pglite-pgvector'
 import fs from 'fs'
 
-const db = new PGlite()
+const db = new PGlite({ extensions: { vector } })
 const schema = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8').replace('create extension if not exists pgcrypto;', '')
+const features = fs.readFileSync(new URL('../002_features.sql', import.meta.url), 'utf8')
+  .replace('create extension if not exists pg_net with schema extensions;', '')
 
 await db.exec(`
 create role authenticated; create role anon;
@@ -16,13 +19,20 @@ create table storage.objects(id uuid default gen_random_uuid(), bucket_id text, 
 alter table storage.objects enable row level security;
 create function storage.foldername(name text) returns text[] language sql immutable as $$ select (string_to_array(name,'/'))[1:array_length(string_to_array(name,'/'),1)-1] $$;
 create publication supabase_realtime;
+create role service_role;
+create schema vault;
+create table vault.decrypted_secrets(name text primary key, decrypted_secret text);
+create schema net;
+create table net.calls(url text, body jsonb, headers jsonb);
+create function net.http_post(url text, body jsonb, headers jsonb) returns bigint language sql as $$
+  insert into net.calls values (url, body, headers); select 1::bigint $$;
 `)
 await db.exec(schema)
+await db.exec(features)
 await db.exec(`
-grant usage on schema public, auth, storage to authenticated, anon;
+grant usage on schema public, auth, storage, extensions to authenticated, anon;
 grant all on all tables in schema public to authenticated;
 grant all on storage.objects to authenticated;
-grant execute on all functions in schema public to authenticated, anon;
 `)
 
 const U = {
@@ -118,6 +128,78 @@ await expect('Maria não troca de grupo', () => as(U.maria, true, `update partic
 await expect('Maria não se move para outra viagem', () => as(U.maria, true, `update participants set trip_id=gen_random_uuid() where user_id=$1`, [U.maria]), errors)
 await expect('equipe ainda troca o grupo da Maria', () => as(U.coord, false, `update participants set group_label='Ônibus 3' where user_id=$1 returning id`, [U.maria]), rows(1))
 await expect('pesquisa com viagem errada é recusada', () => as(U.maria, true, `insert into survey_responses(trip_id, participant_id, rating) values (gen_random_uuid(),$1,1)`, [global.mariaPid]), errors)
+
+// ---------- Reconhecimento facial ----------
+const vec = (seed, noise = 0) => '[' + Array.from({ length: 128 }, (_, i) => (Math.sin(seed * 31 + i) * 0.1 + (noise ? Math.cos(i * 7 + noise) * noise : 0)).toFixed(5)).join(',') + ']'
+let photoA, photoB
+await as(U.maria, true, `update participants set photo_consent = true where user_id = $1`, [U.maria])
+await expect('equipe cadastra foto com dois rostos (Maria e outra pessoa)', async () => {
+  photoA = (await as(U.coord, false, `insert into photos(trip_id, storage_path) values ($1,'x/a.jpg') returning id`, [tripId])).rows[0].id
+  await as(U.coord, false, `insert into photo_faces(photo_id, trip_id, descriptor) values ($1,$2,$3),($1,$2,$4)`, [photoA, tripId, vec(1), vec(9)])
+  return as(U.coord, false, `select * from photo_faces where photo_id=$1`, [photoA])
+}, rows(2))
+await expect('participante não lê os rostos das fotos', () => as(U.maria, true, `select * from photo_faces`), rows(0))
+await expect('Maria envia a selfie e a foto dela é marcada sozinha', async () => {
+  await as(U.maria, true, `insert into participant_faces(participant_id, trip_id, descriptor) values ($1,$2,$3)`, [global.mariaPid, tripId, vec(1, 0.002)])
+  return as(U.maria, true, `select * from photo_tags where participant_id=$1 and source='auto'`, [global.mariaPid])
+}, rows(1))
+await expect('foto nova da Maria é marcada na hora do envio', async () => {
+  photoB = (await as(U.coord, false, `insert into photos(trip_id, storage_path) values ($1,'x/b.jpg') returning id`, [tripId])).rows[0].id
+  await as(U.coord, false, `insert into photo_faces(photo_id, trip_id, descriptor) values ($1,$2,$3)`, [photoB, tripId, vec(1, 0.003)])
+  return as(U.maria, true, `select * from photo_tags where participant_id=$1`, [global.mariaPid])
+}, rows(2))
+await expect('rosto de outra pessoa não marca a Maria', async () => {
+  const p = (await as(U.coord, false, `insert into photos(trip_id, storage_path) values ($1,'x/c.jpg') returning id`, [tripId])).rows[0].id
+  await as(U.coord, false, `insert into photo_faces(photo_id, trip_id, descriptor) values ($1,$2,$3)`, [p, tripId, vec(9)])
+  return as(U.maria, true, `select * from photo_tags where participant_id=$1`, [global.mariaPid])
+}, rows(2))
+await expect('Maria não lê a selfie de outra pessoa', () => as(U.maria, true, `select * from participant_faces where participant_id <> $1`, [global.mariaPid]), rows(0))
+await expect('Maria oculta uma foto e ela some do "minhas fotos"', async () => {
+  await as(U.maria, true, `update photo_tags set hidden = true where photo_id=$1 and participant_id=$2`, [photoA, global.mariaPid])
+  return as(U.maria, true, `select * from photo_tags where participant_id=$1 and not hidden`, [global.mariaPid])
+}, rows(1))
+await expect('Maria não troca a marcação para outra pessoa', () => as(U.maria, true, `update photo_tags set participant_id = gen_random_uuid() where participant_id=$1`, [global.mariaPid]), errors)
+await expect('foto oculta não volta quando a selfie é refeita', async () => {
+  await as(U.maria, true, `update participant_faces set descriptor = $2 where participant_id=$1`, [global.mariaPid, vec(1, 0.001)])
+  return as(U.maria, true, `select * from photo_tags where participant_id=$1 and not hidden`, [global.mariaPid])
+}, rows(1))
+await expect('sem autorização de imagem, a selfie é recusada', async () => {
+  const pid = (await as(U.newbie, true, `select my_participant_id($1) id`, [tripId])).rows[0].id
+  return as(U.newbie, true, `insert into participant_faces(participant_id, trip_id, descriptor) values ($1,$2,$3)`, [pid, tripId, vec(3)])
+}, errors)
+await expect('retirar a autorização apaga a selfie e as marcações automáticas', async () => {
+  await as(U.maria, true, `update participants set photo_consent = false where user_id=$1`, [U.maria])
+  const faces = await as(U.owner, false, `select 1 from participant_faces where participant_id=$1`, [global.mariaPid])
+  const tags = await as(U.owner, false, `select 1 from photo_tags where participant_id=$1 and source='auto'`, [global.mariaPid])
+  return { rows: [...faces.rows, ...tags.rows] }
+}, rows(0))
+
+// ---------- Push ----------
+await expect('participante registra o celular para push', () => as(U.maria, true, `insert into push_subscriptions(participant_id, endpoint, p256dh, auth) values ($1,'https://push.example/1','k','a')`, [global.mariaPid]), works)
+await expect('estranho não vê inscrições de push', () => as(U.stranger, true, `select * from push_subscriptions`), rows(0))
+await expect('participante não lê as chaves do push', () => as(U.maria, true, `select * from push_config()`), errors)
+await expect('aviso novo dispara a função de push', async () => {
+  await db.exec(`reset role; insert into vault.decrypted_secrets values ('push_function_url','https://fn.example/notify'),('push_webhook_secret','s3cr3t')`)
+  await as(U.coord, false, `insert into announcements(trip_id, title) values ($1,'Teste push')`, [tripId])
+  await db.exec('reset role')
+  return db.query(`select * from net.calls where headers->>'x-juntly-secret' = 's3cr3t'`)
+}, rows(1))
+
+// ---------- Viagem de demonstração ----------
+let demoId
+await expect('estranho não cria viagem de demonstração', () => as(U.stranger, true, `select create_demo_trip($1)`, [agencyId]), errors)
+await expect('equipe cria viagem de demonstração', async () => {
+  demoId = (await as(U.coord, false, `select create_demo_trip($1) id`, [agencyId])).rows[0].id
+  return as(U.coord, false, `select * from participants where trip_id=$1`, [demoId])
+}, rows(40))
+await expect('demonstração tem agenda, avisos, check-ins e pesquisa', async () => {
+  const r = await as(U.coord, false, `select
+    (select count(*) from agenda_items where trip_id=$1) a, (select count(*) from announcements where trip_id=$1) n,
+    (select count(*) from checkins c join checkpoints k on k.id=c.checkpoint_id where k.trip_id=$1) c,
+    (select count(*) from survey_responses where trip_id=$1) s`, [demoId])
+  const x = r.rows[0]
+  return { rows: (x.a > 10 && x.n >= 4 && x.c > 60 && x.s > 15) ? [1] : [] }
+}, rows(1))
 
 console.log(failures ? `\n${failures} falha(s)` : '\nTodos os testes passaram')
 process.exit(failures ? 1 : 0)
