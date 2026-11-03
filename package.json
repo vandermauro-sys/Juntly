@@ -1,0 +1,27 @@
+{
+  "name": "juntly",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test:db": "node supabase/tests/permissions.test.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.118.0",
+    "html5-qrcode": "^2.3.8",
+    "papaparse": "^5.7.0",
+    "qrcode.react": "^4.2.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router-dom": "^7.18.5"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.14",
+    "@vitejs/plugin-react": "^6.2.1",
+    "vite": "^8.3.5",
+    "vite-plugin-pwa": "^2.0.0"
+  },
+  "private": true,
+  "type": "module"
+}
